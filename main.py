@@ -29,6 +29,14 @@ class QQX5MrbxPlugin(Star):
     # 注册指令的装饰器。指令名为 每日榜线。注册成功后，发送 `/每日榜线` 就会触发这个指令
     @filter.command("每日榜线")
     async def mrbx(self, event: AstrMessageEvent):
+        group_name = "ΜυМа.εхε"
+
+        try:
+            if event.message_obj.group:
+                group_name = event.message_obj.group.group_name
+        except Exception:
+            pass
+        
         settings = load_settings(self.base_dir)
         client_id = settings["client_id"]
         client_secret = settings["client_secret"]
@@ -75,7 +83,13 @@ class QQX5MrbxPlugin(Star):
             result = df[["榜区"] + cols]
             logger.info("\n{}", result.to_string())
             logger.info("开始渲染成图片")
-            path = df_to_image(result, self.font_path, active_sheet['name'], "每日榜线.png")
+            path = df_to_image(
+                result,
+                self.font_path,
+                active_sheet['name'],
+                group_name,
+                "每日榜线.png"
+            )
             logger.info("渲染成图片完成 ", path)
             yield event.image_result(path)
         except WPSAPIError as exc:
@@ -177,7 +191,7 @@ def sort_date_columns(cols):
 
     return sorted(cols, key=parse)
 
-def df_to_image(df, font_path, title, output="榜单.png"):
+def df_to_image(df, font_path, title, group_name, output="榜单.png"):
     font_prop = fm.FontProperties(fname=font_path)
     plt.rcParams['axes.unicode_minus'] = False
 
@@ -234,7 +248,7 @@ def df_to_image(df, font_path, title, output="榜单.png"):
     footer_text = (
         f"当前赛季：{title}\n"
         "数据来源：https://kdocs.cn/l/ch0MppmOWCDV\n"
-        "图片来源：ΜυМа.εхε\n"
+        f"图片来源：{group_name}\n"
         f"{update_time}"
     )
 
