@@ -14,6 +14,8 @@ import re
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
 
+from datetime import datetime
+
 @register("QQ炫舞手游排位每日榜线", "Chenzb", "可以获取每日榜线图片的小插件", "1.0.0")
 class QQX5MrbxPlugin(Star):
     def __init__(self, context: Context):
@@ -155,7 +157,7 @@ def wps_to_df(range_data):
 def get_last_3_days_columns(df):
     cols = []
 
-    for i in range(3):
+    for i in range(4):
         d = datetime.now() - timedelta(days=i)
         col = f"{d.month}月{d.day}日"
 
@@ -179,42 +181,74 @@ def df_to_image(df, font_path, title, output="榜单.png"):
     font_prop = fm.FontProperties(fname=font_path)
     plt.rcParams['axes.unicode_minus'] = False
 
-    fig, ax = plt.subplots(figsize=(6, 6))
+    fig, ax = plt.subplots(figsize=(6, 7))  # 高度稍微增加
     ax.axis('off')
 
-    ax.set_title(title, fontproperties=font_prop, fontsize=18, weight='bold')
-    plt.subplots_adjust(top=0.75)
+    # ax.set_title(title, fontproperties=font_prop, fontsize=18, weight='bold')
+    plt.subplots_adjust(top=0.85, bottom=0.15)
 
     table = ax.table(
         cellText=df.values,
         colLabels=df.columns,
         cellLoc='center',
         loc='center',
-        bbox=[0, 0, 1, 0.95]
+        bbox=[0.02, 0.16, 0.96, 0.82]  # 给底部留空间
     )
 
     table.auto_set_font_size(False)
     table.set_fontsize(14)
     table.scale(1.0, 2.0)
 
-    # 应用字体（解决乱码）
+    # 应用字体
     for cell in table.get_celld().values():
         cell.set_text_props(fontproperties=font_prop)
 
+    # 表头
     for j in range(len(df.columns)):
-        table[(0, j)].set_text_props(fontproperties=font_prop, size=14, weight='bold')
+        table[(0, j)].set_text_props(
+            fontproperties=font_prop,
+            size=14,
+            weight='bold'
+        )
 
     # 高亮前三
     for i in range(len(df)):
         for j in range(len(df.columns)):
             cell = table[(i + 1, j)]
-            cell.set_text_props(fontproperties=font_prop, size=14)
+
+            cell.set_text_props(
+                fontproperties=font_prop,
+                size=13
+            )
+
             if i == 0:
                 cell.set_facecolor("#FFD700")
             elif i == 1:
                 cell.set_facecolor("#C0C0C0")
             elif i == 2:
                 cell.set_facecolor("#CD7F32")
+
+    update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+
+    # 底部说明
+    footer_text = (
+        f"当前赛季：{title}\n"
+        "数据来源：https://kdocs.cn/l/ch0MppmOWCDV\n"
+        "图片来源：ΜυМа.εхε\n"
+        f"{update_time}"
+    )
+
+    fig.text(
+        0.5,
+        0.13,
+        footer_text,
+        fontproperties=font_prop,
+        fontsize=12,
+        ha='center',
+        va='bottom',
+        color='gray',
+        linespacing=1.7  # 默认约1.2
+    )
 
     plt.savefig(output, bbox_inches='tight', dpi=300)
     plt.close()
