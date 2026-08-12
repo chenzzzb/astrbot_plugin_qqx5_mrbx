@@ -199,7 +199,7 @@ def df_to_image(df, font_path, title, group_name, output="榜单.png"):
     ax.axis('off')
 
     # ax.set_title(title, fontproperties=font_prop, fontsize=18, weight='bold')
-    plt.subplots_adjust(top=0.85, bottom=0.15)
+    plt.subplots_adjust(top=0.85, bottom=0.18)
 
     table = ax.table(
         cellText=df.values,
@@ -261,7 +261,7 @@ def df_to_image(df, font_path, title, group_name, output="榜单.png"):
         ha='center',
         va='bottom',
         color='gray',
-        linespacing=1.7  # 默认约1.2
+        linespacing=1.5  # 默认约1.2
     )
 
     plt.savefig(output, bbox_inches='tight', dpi=300)
