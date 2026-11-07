@@ -76,12 +76,14 @@ class QQX5MrbxPlugin(Star):
             logger.info(data)
             df = wps_to_df(data["data"]["range_data"])
             logger.info("\n{}", df.to_string())
-            # rank_df = get_today_rank(df)
             
-            cols = get_last_3_days_columns(df)
+            cols = get_last_4_days_columns(df)
             cols = sort_date_columns(cols)
 
             result = df[["榜区"] + cols].copy()
+
+            # 增加最后一天与前一天的变化
+            result = add_change_column(result, cols)
 
             today_col = f"{datetime.now().month}月{datetime.now().day}日"
 
@@ -210,11 +212,17 @@ def wps_to_df(range_data):
 
     return df
 
-def get_last_3_days_columns(df):
+
+def get_last_4_days_columns(df):
+    now = datetime.now()
+
+    # 05:00 前偏移 4 天，05:00 后偏移 3 天
+    start = 4 if now.hour < 5 else 3
+
     cols = []
 
-    for i in range(4):
-        d = datetime.now() - timedelta(days=i)
+    for i in range(start, start - 4, -1):
+        d = now - timedelta(days=i)
         col = f"{d.month}月{d.day}日"
 
         if col in df.columns:
@@ -233,27 +241,68 @@ def sort_date_columns(cols):
 
     return sorted(cols, key=parse)
 
+def parse_star_count(value):
+    """提取星星数量，兼容普通数字和带神的数值"""
+    if pd.isna(value):
+        return None
+
+    match = re.search(r"-?\d+(?:\.\d+)?", str(value).replace(",", ""))
+
+    return float(match.group()) if match else None
+
+
+def add_change_column(df, date_cols):
+    df = df.copy()
+
+    if len(date_cols) < 2:
+        df["日增减"] = "—"
+        return df
+
+    previous_col = date_cols[-2]
+    latest_col = date_cols[-1]
+
+    def calculate(row):
+        previous = parse_star_count(row[previous_col])
+        latest = parse_star_count(row[latest_col])
+
+        if previous is None or latest is None:
+            return "—"
+
+        diff = latest - previous
+
+        if diff > 0:
+            return f"↑{diff:g}"
+        elif diff < 0:
+            return f"↓{abs(diff):g}"
+        else:
+            return "—"
+
+    df["日增减"] = df.apply(calculate, axis=1)
+
+    return df
+
 def df_to_image(df, font_path, title, group_name, output="榜单.png"):
     font_prop = fm.FontProperties(fname=font_path)
     plt.rcParams['axes.unicode_minus'] = False
 
-    fig, ax = plt.subplots(figsize=(6, 7))  # 高度稍微增加
-    ax.axis('off')
+    # 固定画布尺寸
+    fig = plt.figure(figsize=(7, 7), dpi=300)
 
-    # ax.set_title(title, fontproperties=font_prop, fontsize=18, weight='bold')
-    plt.subplots_adjust(top=0.85, bottom=0.18)
+    # 上方：表格区域
+    ax = fig.add_axes([0.05, 0.20, 0.90, 0.75])
+    ax.axis('off')
 
     table = ax.table(
         cellText=df.values,
         colLabels=df.columns,
         cellLoc='center',
         loc='center',
-        bbox=[0.02, 0.16, 0.96, 0.82]  # 给底部留空间
+        bbox=[0, 0, 1, 1]
     )
 
     table.auto_set_font_size(False)
     table.set_fontsize(14)
-    table.scale(1.0, 2.0)
+    table.scale(1.0, 1.0)
 
     # 应用字体
     for cell in table.get_celld().values():
@@ -263,9 +312,11 @@ def df_to_image(df, font_path, title, group_name, output="榜单.png"):
     for j in range(len(df.columns)):
         table[(0, j)].set_text_props(
             fontproperties=font_prop,
-            size=14,
+            size=16,
             weight='bold'
         )
+
+    change_col_index = df.columns.get_loc("日增减") if "日增减" in df.columns else -1
 
     # 高亮前三
     for i in range(len(df)):
@@ -274,7 +325,7 @@ def df_to_image(df, font_path, title, group_name, output="榜单.png"):
 
             cell.set_text_props(
                 fontproperties=font_prop,
-                size=13
+                size=16
             )
 
             if i == 0:
@@ -284,29 +335,44 @@ def df_to_image(df, font_path, title, group_name, output="榜单.png"):
             elif i == 2:
                 cell.set_facecolor("#CD7F32")
 
+            # 变化列字体颜色
+            if j == change_col_index:
+                value = str(df.iloc[i, j])
+
+                if value.startswith("↑"):
+                    cell.get_text().set_color("#E53935")
+                elif value.startswith("↓"):
+                    cell.get_text().set_color("#43A047")
+                else:
+                    cell.get_text().set_color("gray")
+
+    # 下方：文字说明区域
     update_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
 
-    # 底部说明
-    footer_text = (
-        f"当前赛季：{title}\n"
-        "数据来源：https://kdocs.cn/l/ch0MppmOWCDV\n"
-        f"图片来源：{group_name}\n"
-        f"{update_time}"
-    )
+    footer_lines = [
+        (f"当前赛季：{title}", "#1677FF", 15),
+        ("数据来源：https://kdocs.cn/l/ch0MppmOWCDV", "gray", 11),
+        (f"图片来源：{group_name}", "gray", 11),
+        (update_time, "gray", 11)
+    ]
 
-    fig.text(
-        0.5,
-        0.13,
-        footer_text,
-        fontproperties=font_prop,
-        fontsize=12,
-        ha='center',
-        va='bottom',
-        color='gray',
-        linespacing=1.5  # 默认约1.2
-    )
+    footer_start_y = 0.16
+    footer_spacing = 0.04
 
-    plt.savefig(output, bbox_inches='tight', dpi=300)
-    plt.close()
+    for i, (text, color, size) in enumerate(footer_lines):
+        fig.text(
+            0.5,
+            footer_start_y - i * footer_spacing,
+            text,
+            fontproperties=font_prop,
+            fontsize=size,
+            ha='center',
+            va='center',
+            color=color
+        )
+
+    # 保存图片，不使用 bbox_inches='tight'
+    fig.savefig(output, dpi=300)
+    plt.close(fig)
 
     return output
