@@ -77,10 +77,43 @@ class QQX5MrbxPlugin(Star):
             df = wps_to_df(data["data"]["range_data"])
             logger.info("\n{}", df.to_string())
             # rank_df = get_today_rank(df)
-
+            
             cols = get_last_3_days_columns(df)
             cols = sort_date_columns(cols)
-            result = df[["榜区"] + cols]
+
+            result = df[["榜区"] + cols].copy()
+
+            today_col = f"{datetime.now().month}月{datetime.now().day}日"
+
+            if today_col in result.columns:
+
+                def sort_key(value):
+                    value = str(value).strip()
+
+                    # 带「神」的值排在所有普通数字后面
+                    m = re.search(r"(\d+(?:\.\d+)?)\s*神", value)
+                    if m:
+                        return (1, -float(m.group(1)))
+
+                    # 普通数字，按数值从大到小
+                    try:
+                        return (0, -float(value))
+                    except ValueError:
+                        return (2, 0)
+
+                result = (
+                    result.assign(
+                        _sort_key=result[today_col].map(sort_key)
+                    )
+                    .sort_values(
+                        by="_sort_key",
+                        ascending=True,
+                        kind="stable",
+                    )
+                    .drop(columns="_sort_key")
+                    .reset_index(drop=True)
+                )
+            
             logger.info("\n{}", result.to_string())
             logger.info("开始渲染成图片")
             path = df_to_image(
@@ -104,21 +137,30 @@ class QQX5MrbxPlugin(Star):
 
 def parse_sheet_range(name: str):
     """
-    解析：
-    2026年4.9-7.9（ssp）
-    → (2026-04-09, 2026-07-09)
-    """
+    支持格式：
+    2026年4.9-7.9（xxx）
+    2026年4.9-2027年7.9（xxx）
 
-    m = re.search(r"(\d{4})年(\d+)\.(\d+)-(\d+)\.(\d+)", name)
+    返回：
+    (start, end)
+    """
+    m = re.search(
+        r"(\d{4})年(\d+)\.(\d+)-(?:(\d{4})年)?(\d+)\.(\d+)",
+        name,
+    )
     if not m:
         return None
 
-    year = int(m.group(1))
-    m1, d1 = int(m.group(2)), int(m.group(3))
-    m2, d2 = int(m.group(4)), int(m.group(5))
+    start_year = int(m.group(1))
+    start_month = int(m.group(2))
+    start_day = int(m.group(3))
 
-    start = datetime(year, m1, d1)
-    end = datetime(year, m2, d2)
+    end_year = int(m.group(4)) if m.group(4) else start_year
+    end_month = int(m.group(5))
+    end_day = int(m.group(6))
+
+    start = datetime(start_year, start_month, start_day)
+    end = datetime(end_year, end_month, end_day)
 
     return start, end
 
