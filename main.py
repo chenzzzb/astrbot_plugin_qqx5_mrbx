@@ -13,6 +13,7 @@ from datetime import datetime, timedelta
 import re
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+from matplotlib.ticker import MultipleLocator, FuncFormatter
 
 from datetime import datetime
 
@@ -73,9 +74,8 @@ class QQX5MrbxPlugin(Star):
                 col_from=0,
                 col_to=100,
             )
-            logger.info(data)
             df = wps_to_df(data["data"]["range_data"])
-            logger.info("\n{}", df.to_string())
+            logger.info(df.to_string())
             
             cols = get_last_4_days_columns(df)
             cols = sort_date_columns(cols)
@@ -116,7 +116,6 @@ class QQX5MrbxPlugin(Star):
                     .reset_index(drop=True)
                 )
             
-            logger.info("\n{}", result.to_string())
             logger.info("开始渲染成图片")
             path = df_to_image(
                 result,
@@ -126,7 +125,28 @@ class QQX5MrbxPlugin(Star):
                 "每日榜线.png"
             )
             logger.info("渲染成图片完成 ", path)
+            
             yield event.image_result(path)
+
+            # 解析完整日期折线图数据
+            chart_data = parse_line_chart_data(df)
+            logger.info("折线图横坐标：{}", chart_data["x"])
+            logger.info("折线图纵坐标：{}", chart_data["series"])
+
+            # 生成折线图
+            logger.info("开始渲染折线图")
+
+            chart_path = line_chart_to_image(
+                chart_data,
+                self.font_path,
+                active_sheet["name"],
+                group_name,
+                "每日榜线趋势.png"
+            )
+
+            logger.info("折线图渲染完成：{}", chart_path)
+
+            yield event.image_result(chart_path)
         except WPSAPIError as exc:
             logger.error({
                 "message": str(exc),
@@ -246,9 +266,19 @@ def parse_star_count(value):
     if pd.isna(value):
         return None
 
-    match = re.search(r"-?\d+(?:\.\d+)?", str(value).replace(",", ""))
+    text = str(value).strip().replace(",", "")
 
-    return float(match.group()) if match else None
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+        return None
+
+    number = float(match.group())
+
+    # 带“神”的数值需要减去 50
+    if "神" in text:
+        number -= 50
+
+    return number
 
 
 def add_change_column(df, date_cols):
@@ -373,6 +403,195 @@ def df_to_image(df, font_path, title, group_name, output="榜单.png"):
 
     # 保存图片，不使用 bbox_inches='tight'
     fig.savefig(output, dpi=300)
+    plt.close(fig)
+
+    return output
+
+def parse_chart_value(value):
+    if pd.isna(value) or str(value).strip() == "":
+        return None
+
+    value = str(value).strip()
+
+    # 带神的数值：去掉神后减去50
+    if "神" in value:
+        number = re.search(r"-?\d+(?:\.\d+)?", value)
+
+        if number:
+            return float(number.group()) - 50
+
+        return None
+
+    # 普通数字
+    try:
+        return float(value)
+    except ValueError:
+        return None
+
+def parse_line_chart_data(df):
+    """
+    解析榜区折线图数据
+
+    返回:
+    {
+        "x": ["10月23日", "10月24日", ...],
+        "series": {
+            "三生三世": ["3", "20", "32", ...],
+            "活力飞扬": ["0", "11", "30", ...]
+        }
+    }
+    """
+
+    # 提取日期列
+    date_cols = [
+        col for col in df.columns
+        if re.match(
+            r"^\s*\d{1,2}\s*月\s*\d{1,2}\s*日\s*$",
+            str(col)
+        )
+    ]
+
+    # 按月、日排序
+    date_cols.sort(
+        key=lambda col: tuple(
+            map(int, re.findall(r"\d+", str(col)))
+        )
+    )
+
+    series = {}
+
+    for _, row in df.iterrows():
+        name = str(row["榜区"]).strip()
+
+        if not name or name == "nan":
+            continue
+
+        values = []
+
+        for col in date_cols:
+            value = row[col]
+            values.append(parse_chart_value(value))
+
+        series[name] = values
+
+    # 删除末尾没有任何数据的日期
+    while date_cols and all(
+        value is None
+        for values in series.values()
+        for value in [values[-1]]
+    ):
+        date_cols.pop()
+
+        for values in series.values():
+            values.pop()
+
+    return {
+        "x": [
+            re.sub(r"\s+", "", str(col))
+            for col in date_cols
+        ],
+        "series": series
+    }
+
+
+def line_chart_to_image(
+    chart_data,
+    font_path,
+    title,
+    group_name,
+    output="每日榜线趋势.png"
+):
+    font_prop = fm.FontProperties(fname=font_path)
+
+    plt.rcParams["axes.unicode_minus"] = False
+
+    dates = chart_data["x"]
+    series = chart_data["series"]
+
+    fig, ax = plt.subplots(figsize=(12, 7), dpi=200)
+
+    # 使用 tab20 调色板，为每条折线分配不同颜色
+    colors = plt.cm.tab20.colors
+
+    for index, (name, values) in enumerate(series.items()):
+        y_values = [
+            parse_star_count(value)
+            for value in values
+        ]
+
+        ax.plot(
+            dates,
+            y_values,
+            color=colors[index % len(colors)],
+            marker="o",
+            markersize=4,
+            linewidth=1.8,
+            label=name
+        )
+
+    ax.set_title(
+        f"{title} - 每日榜线趋势",
+        fontproperties=font_prop,
+        fontsize=16,
+        pad=20
+    )
+
+    # X 轴日期
+    ax.tick_params(axis="x", rotation=60)
+
+    for label in ax.get_xticklabels():
+        label.set_fontproperties(font_prop)
+        label.set_fontsize(9)
+
+    for label in ax.get_yticklabels():
+        label.set_fontproperties(font_prop)
+
+    # Y 轴刻度
+    ax.yaxis.set_major_locator(MultipleLocator(10))
+    ax.yaxis.set_minor_locator(MultipleLocator(5))
+
+    # 负数转换为神，正数和0保持原样
+    def format_y_axis(y, _):
+        if y < 0:
+            return f"{max(0, 50 + y):g}神"
+        return f"{y:g}"
+
+    ax.yaxis.set_major_formatter(FuncFormatter(format_y_axis))
+
+    # 最小值固定为 -50
+    ax.set_ylim(bottom=-50)
+
+    # 网格
+    ax.grid(True, which="major", linestyle="--", alpha=0.3)
+    ax.grid(True, which="minor", linestyle=":", alpha=0.15)
+
+    # 图例
+    ax.legend(
+        prop=font_prop,
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1),
+        frameon=False
+    )
+
+    # 底部说明
+    fig.text(
+        0.5,
+        0.02,
+        f"{datetime.now():%Y-%m-%d %H:%M:%S.%f}",
+        fontproperties=font_prop,
+        fontsize=9,
+        ha="center",
+        color="gray"
+    )
+
+    fig.tight_layout(rect=[0, 0.05, 0.85, 1])
+
+    fig.savefig(
+        output,
+        dpi=200,
+        bbox_inches="tight"
+    )
+
     plt.close(fig)
 
     return output
